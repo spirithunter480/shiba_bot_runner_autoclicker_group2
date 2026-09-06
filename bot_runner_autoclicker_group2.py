@@ -366,7 +366,7 @@ async def shiba_worker(acc, initial_offset):
                                     break
 
                                 # ارسال بسته تپ متناسب با بازی ۳ انگشتی (۱۶ الی ۲۲ تپ)
-                                taps_to_send = min(random.randint(16, 22), max(1, int(energy / 5)))
+                                taps_to_send = min(random.randint(17, 23), max(1, int(energy / 5)))
 
                                 res = await send_tap(session, init_data, taps=taps_to_send, token=current_token)
                                 
