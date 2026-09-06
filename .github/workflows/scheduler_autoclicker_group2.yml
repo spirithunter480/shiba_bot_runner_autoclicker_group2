@@ -41,6 +41,6 @@ jobs:
           ACCOUNTS_JSON: ${{ secrets.ACCOUNTS_JSON }}
           TG_API_ID: ${{ secrets.TG_API_ID }}
           TG_API_HASH: ${{ secrets.TG_API_HASH }}
-          NOTIFIER_BOT_TOKEN: ${{ secrets.NOTIFIER_BOT_TOKEN }}
+          NOTIFIER_BOT_TOKEN: ${{ secrets.NOTIFIER_BOT_TOKEN2 }}
           NOTIFIER_CHAT_ID: ${{ secrets.NOTIFIER_CHAT_ID }}
         run: python bot_runner_autoclicker_group2.py
