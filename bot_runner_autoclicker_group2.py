@@ -1,5 +1,5 @@
 # ==============================================================================
-# SHIBA INU AUTO-TAP — نسخه توزیع‌شده نوبتی همراه با سیستم خودکار تسک‌ها (Tasks)
+# SHIBA INU AUTO-TAP — نسخه توزیع‌شده نوبتی همراه با سیستم خودکار تسک‌ها و آمار لیدربرد (Group 2)
 # ==============================================================================
 # ربات هدف: @SHIBAInuTapbot
 # اتصال از طریق ورکر کلودفلر (Reverse Proxy)
@@ -65,6 +65,7 @@ SPIN_URL = f"{BASE_URL}/v1/game/spin"
 TASKS_URL = f"{BASE_URL}/v1/game/tasks"
 TASK_START_URL = f"{BASE_URL}/v1/game/task/start"
 TASK_SUBMIT_URL = f"{BASE_URL}/v1/game/task/submit"
+CONTEST_URL = f"{BASE_URL}/v1/game/contest"
 
 MAX_RUN_SECONDS = (5 * 3600) + (55 * 60)
 
@@ -278,6 +279,29 @@ async def process_tasks(session, init_data, acc_name, current_balance):
 
     return current_balance
 
+# ==============================================================================
+# دریافت آمار مسابقه و رتبه (Contest Leaderboard)
+# ==============================================================================
+async def fetch_contest_stats(session, init_data):
+    payload = {
+        "bot": BOT_USERNAME,
+        "initData": init_data
+    }
+    try:
+        async with session.post(CONTEST_URL, json=payload, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                contests = data.get("contests", [])
+                for item in contests:
+                    if item.get("metric") == "engagement":
+                        you_data = item.get("you", {})
+                        rank = you_data.get("rank", "N/A")
+                        earnings = you_data.get("value", "N/A")
+                        return rank, earnings
+    except Exception:
+        pass
+    return "N/A", "N/A"
+
 async def shiba_worker(acc, initial_offset):
     acc_name = acc.get("name", "Account")
     acc_headers = get_account_headers(acc)
@@ -429,11 +453,18 @@ async def shiba_worker(acc, initial_offset):
 
                         print(f"[{acc_name}] Turn complete. Recharging to ~{target_energy} (sleeping {int(sleep_time)}s)...")
 
+                        # دریافت رتبه و ارنینگ قبل از گزارش‌دهی
+                        rank, earnings = await fetch_contest_stats(session, init_data)
+                        earnings_str = f"{earnings:,}" if isinstance(earnings, int) else str(earnings)
+                        balance_str = f"{balance:,}" if isinstance(balance, int) else str(balance)
+
                         # ارسال نوتیفیکیشن وضعیت خواب
                         sleep_minutes = int(sleep_time // 60)
                         notify_msg = (
                             f"💤 <b>{acc_name}</b> Finished Tapping\n"
-                            f"💰 Balance: <b>{balance}</b>\n"
+                            f"💰 Balance: <b>{balance_str}</b>\n"
+                            f"💎 Earnings: <b>{earnings_str}</b>\n"
+                            f"🏆 Rank: <b>#{rank}</b>\n"
                             f"🔋 Energy: {energy}/1000\n"
                             f"⏳ Sleeping for: <b>{sleep_minutes} minutes</b>\n"
                             f"✅ Safe to open on mobile now!"
@@ -476,6 +507,7 @@ async def main():
     print(f">>> SHIBA Inu Auto-Tap Started ({num_accounts} Accounts)")
     print(">>> Architecture: Staggered Shift & Global Lock Queue")
     print(">>> Tasks Module: Auto-Start & Auto-Submit Activated")
+    print(">>> Contest Stats: Enabled")
     print(f">>> Scheduled Auto-Stop: 5 Hours and 55 Minutes")
     print("==================================================")
 
