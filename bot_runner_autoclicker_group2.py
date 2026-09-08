@@ -282,24 +282,33 @@ async def process_tasks(session, init_data, acc_name, current_balance):
 # ==============================================================================
 # دریافت آمار مسابقه و رتبه (Contest Leaderboard)
 # ==============================================================================
-async def fetch_contest_stats(session, init_data):
+async def fetch_contest_stats(session, init_data, acc_name=""):
     payload = {
         "bot": BOT_USERNAME,
         "initData": init_data
     }
-    try:
-        async with session.post(CONTEST_URL, json=payload, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                contests = data.get("contests", [])
-                for item in contests:
-                    if item.get("metric") == "engagement":
-                        you_data = item.get("you", {})
-                        rank = you_data.get("rank", "N/A")
-                        earnings = you_data.get("value", "N/A")
-                        return rank, earnings
-    except Exception:
-        pass
+    for attempt in range(2):
+        try:
+            async with session.post(CONTEST_URL, json=payload, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    contests = data.get("contests", [])
+                    for item in contests:
+                        if item.get("metric") == "engagement":
+                            you_data = item.get("you", {})
+                            rank = you_data.get("rank", "N/A")
+                            earnings = you_data.get("value", "N/A")
+                            return rank, earnings
+                elif resp.status == 401:
+                    print(f"[{acc_name}] Contest Auth 401 (stale initData)")
+                    break
+                else:
+                    print(f"[{acc_name}] Contest HTTP {resp.status}")
+        except Exception as e:
+            if attempt == 1:
+                print(f"[{acc_name}] Contest fetch error: {e}")
+        await asyncio.sleep(1.5)
+        
     return "N/A", "N/A"
 
 async def shiba_worker(acc, initial_offset):
@@ -454,7 +463,7 @@ async def shiba_worker(acc, initial_offset):
                         print(f"[{acc_name}] Turn complete. Recharging to ~{target_energy} (sleeping {int(sleep_time)}s)...")
 
                         # دریافت رتبه و ارنینگ قبل از گزارش‌دهی
-                        rank, earnings = await fetch_contest_stats(session, init_data)
+                        rank, earnings = await fetch_contest_stats(session, init_data, acc_name=acc_name)
                         earnings_str = f"{earnings:,}" if isinstance(earnings, int) else str(earnings)
                         balance_str = f"{balance:,}" if isinstance(balance, int) else str(balance)
 
