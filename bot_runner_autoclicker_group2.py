@@ -54,7 +54,7 @@ async def send_telegram_alert(session, message: str):
         pass
 # ==============================================================================
 
-# آدرس پایه ورکر کلودفلر
+# آدرس پایه ورکر کلودفلر (گروه ۲)
 BASE_URL = "https://shibabotrunnerautoclickgroup2.alibotrunner4.workers.dev"
 
 INIT_URL = f"{BASE_URL}/v1/game/init"
@@ -280,14 +280,14 @@ async def process_tasks(session, init_data, acc_name, current_balance):
     return current_balance
 
 # ==============================================================================
-# دریافت آمار مسابقه و رتبه (Contest Leaderboard)
+# دریافت آمار مسابقه و رتبه (Contest Leaderboard) با سازوکار چندمرحله‌ای
 # ==============================================================================
 async def fetch_contest_stats(session, init_data, acc_name=""):
     payload = {
         "bot": BOT_USERNAME,
         "initData": init_data
     }
-    for attempt in range(2):
+    for attempt in range(3):
         try:
             async with session.post(CONTEST_URL, json=payload, timeout=aiohttp.ClientTimeout(total=15)) as resp:
                 if resp.status == 200:
@@ -295,20 +295,29 @@ async def fetch_contest_stats(session, init_data, acc_name=""):
                     contests = data.get("contests", [])
                     for item in contests:
                         if item.get("metric") == "engagement":
-                            you_data = item.get("you", {})
-                            rank = you_data.get("rank", "N/A")
-                            earnings = you_data.get("value", "N/A")
-                            return rank, earnings
+                            # ۱. بررسی آبجکت مستقیم you
+                            you_data = item.get("you")
+                            if you_data and isinstance(you_data, dict):
+                                rank = you_data.get("rank")
+                                earnings = you_data.get("value")
+                                if rank is not None and earnings is not None:
+                                    return rank, earnings
+
+                            # ۲. در صورت نبودن you، جستجو در لیست کل رقبا
+                            for entry in item.get("entries", []):
+                                if entry.get("you") is True:
+                                    return entry.get("rank", "-"), entry.get("value", "-")
+
+                            return "Unranked", 0
+
                 elif resp.status == 401:
-                    print(f"[{acc_name}] Contest Auth 401 (stale initData)")
+                    print(f"[{acc_name}] Contest 401 (Auth expired)")
                     break
-                else:
-                    print(f"[{acc_name}] Contest HTTP {resp.status}")
         except Exception as e:
-            if attempt == 1:
+            if attempt == 2:
                 print(f"[{acc_name}] Contest fetch error: {e}")
-        await asyncio.sleep(1.5)
-        
+        await asyncio.sleep(2.0)
+
     return "N/A", "N/A"
 
 async def shiba_worker(acc, initial_offset):
@@ -389,21 +398,27 @@ async def shiba_worker(acc, initial_offset):
                         stuck_counter = 0
 
                         # ======================================================
-                        # اختصاصی‌سازی تپ با TAP_LOCK (جلوگیری قطعی از تداخل)
+                        # اختصاصی‌سازی تپ با TAP_LOCK (تپ‌های نرم و پایدار)
                         # ======================================================
                         async with TAP_LOCK:
                             print(f"[{acc_name}] Acquired TAP_LOCK. Emptying tank down to ~{stop_threshold} energy...")
                             while energy > stop_threshold:
-                                if time.time() - tap_start_time > 90.0:
-                                    print(f"[{acc_name}] Run time guard reached (90s). Releasing lock...")
+                                # گارد زمانی بهینه ۱۴۰ ثانیه متناسب با بسته‌های کوچکتر
+                                if time.time() - tap_start_time > 140.0:
+                                    print(f"[{acc_name}] Run time guard reached (140s). Releasing lock...")
                                     break
 
-                                # ارسال بسته تپ متناسب با بازی ۳ انگشتی (۱۶ الی ۲۲ تپ)
-                                taps_to_send = min(random.randint(17, 23), max(1, int(energy / 5)))
+                                # ارسال بسته‌های کوچکتر (۸ الی ۱۲ تپ) برای جلوگیری قطعی از رول‌بک بالانس
+                                taps_to_send = min(random.randint(8, 12), max(1, int(energy / 5)))
 
                                 res = await send_tap(session, init_data, taps=taps_to_send, token=current_token)
                                 
                                 if res and res.get("ok") and "player" in res:
+                                    # بررسی سقف درآمد ۶ ساعته (gained: 0)
+                                    if res.get("gained") == 0:
+                                        print(f"[{acc_name}] Daily cap reached (gained: 0). Pausing taps...")
+                                        break
+
                                     current_token = res.get("tapToken", current_token)
                                     new_player = res.get("player")
                                     new_energy = new_player.get("energy")
@@ -436,13 +451,13 @@ async def shiba_worker(acc, initial_offset):
                                     mobile_conflict = True
                                     break
 
-                                # وقفه ایمن برای عبور از سقف ماژول NestJS Throttler
-                                await asyncio.sleep(random.uniform(5.5, 7.5))
+                                # وقفه مطمئن ۶.۵ تا ۸.۵ ثانیه بین هر بسته تپ
+                                await asyncio.sleep(random.uniform(6.5, 8.5))
 
                         if mobile_conflict:
                             break
 
-                        # بررسی مجدد تسک‌ها (استارت زدن موارد جدید پس از اتمام تپ و آزادسازی قفل)
+                        # بررسی مجدد تسک‌ها
                         balance = await process_tasks(session, init_data, acc_name, balance)
 
                         # وقفه خستگی دوره‌ای
@@ -464,8 +479,14 @@ async def shiba_worker(acc, initial_offset):
 
                         # دریافت رتبه و ارنینگ قبل از گزارش‌دهی
                         rank, earnings = await fetch_contest_stats(session, init_data, acc_name=acc_name)
+                        
+                        # اگر لیدربرد موقتاً N/A داد، ارنینگ را از دیتای کلیدی بازیکن تامین کن
+                        if earnings == "N/A" and "tapsTotal" in player:
+                            earnings = player.get("tapsTotal", "N/A")
+
                         earnings_str = f"{earnings:,}" if isinstance(earnings, int) else str(earnings)
                         balance_str = f"{balance:,}" if isinstance(balance, int) else str(balance)
+                        rank_str = f"#{rank}" if rank not in ["N/A", "Unranked"] else str(rank)
 
                         # ارسال نوتیفیکیشن وضعیت خواب
                         sleep_minutes = int(sleep_time // 60)
@@ -473,7 +494,7 @@ async def shiba_worker(acc, initial_offset):
                             f"💤 <b>{acc_name}</b> Finished Tapping\n"
                             f"💰 Balance: <b>{balance_str}</b>\n"
                             f"💎 Earnings: <b>{earnings_str}</b>\n"
-                            f"🏆 Rank: <b>#{rank}</b>\n"
+                            f"🏆 Rank: <b>{rank_str}</b>\n"
                             f"🔋 Energy: {energy}/1000\n"
                             f"⏳ Sleeping for: <b>{sleep_minutes} minutes</b>\n"
                             f"✅ Safe to open on mobile now!"
@@ -516,7 +537,7 @@ async def main():
     print(f">>> SHIBA Inu Auto-Tap Started ({num_accounts} Accounts)")
     print(">>> Architecture: Staggered Shift & Global Lock Queue")
     print(">>> Tasks Module: Auto-Start & Auto-Submit Activated")
-    print(">>> Contest Stats: Enabled")
+    print(">>> Contest Stats: Robust Multi-Level Fallback")
     print(f">>> Scheduled Auto-Stop: 5 Hours and 55 Minutes")
     print("==================================================")
 
